@@ -12,6 +12,7 @@ func Sync(ctx context.Context, m PubSubMessage) error {
 	lastTime := app.LastSong().Time
 	if lastTime == nil {
 		log.Fatal("Failed to fetch last song")
+		return nil
 	}
 	fmt.Println(lastTime)
 	app.Visit(*lastTime)

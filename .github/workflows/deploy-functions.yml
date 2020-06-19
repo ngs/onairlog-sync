@@ -1,0 +1,38 @@
+name: Deploy Functions
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "**.go"
+      - ".github/workflows/deploy-functions.yml"
+      - "scripts/deploy*.sh"
+
+env:
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  SERVICE_ACCOUNT_EMAIL: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+  DATABASE_URI: ${{ secrets.DATABASE_URI }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  GOPRIVATE: github.com/ngs
+
+jobs:
+  deploy:
+    name: Setup and Deploy
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        function:
+          - Sync
+          - Notify
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+        with:
+          version: "286.0.0"
+          service_account_email: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+          service_account_key: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+          project_id: ${{ secrets.PROJECT_ID }}
+      - run: go mod vendor
+      - name: Deploy ${{ matrix.function }}
+        run: ./scripts/deploy-function.sh ${{ matrix.function }}

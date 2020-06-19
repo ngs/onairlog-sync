@@ -9,7 +9,6 @@ env:
   SERVICE_ACCOUNT_EMAIL: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
   DATABASE_URI: ${{ secrets.DATABASE_URI }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-  GOPRIVATE: github.com/ngs
 
 jobs:
   deploy:

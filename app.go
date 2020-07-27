@@ -163,7 +163,7 @@ func (app *App) LogError(err error) {
 	if app.errorClient == nil {
 		ctx := context.Background()
 		errorClient, err := errorreporting.NewClient(ctx, app.ProjectID(), errorreporting.Config{
-			ServiceName: "alsee-service-log-sync",
+			ServiceName: "onairlog-sync",
 			OnError: func(err error) {
 				log.Printf("Could not log error: %v", err)
 			},

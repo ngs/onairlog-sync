@@ -1,6 +1,6 @@
 {
   "name": "onairlog-sync",
   "image": "golang:1.14.6",
-  "extensions": ["golang.go"],
+  "extensions": ["ms-vscode.go"],
   "postCreateCommand": "go mod vendor"
 }

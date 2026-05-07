@@ -2,7 +2,7 @@
 
 set -eux
 
-RUNTIME=go121
+RUNTIME=go126
 BASE_DIR=$(cd $(dirname $0)/.. && pwd)
 FUNCTION=$1
 

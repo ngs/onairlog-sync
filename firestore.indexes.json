@@ -1,14 +1,28 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "plays",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "songId", "order": "ASCENDING" },
+        { "fieldPath": "time", "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
-      "collectionGroup": "songs",
-      "fieldPath": "title",
+      "collectionGroup": "plays",
+      "fieldPath": "rawTitle",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "plays",
+      "fieldPath": "rawArtist",
       "indexes": []
     },
     {
       "collectionGroup": "songs",
-      "fieldPath": "artist",
+      "fieldPath": "normalizedKey",
       "indexes": []
     }
   ]

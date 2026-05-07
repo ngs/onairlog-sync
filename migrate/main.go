@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,7 +18,10 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-const collection = "songs"
+const (
+	songsCollection = "songs"
+	playsCollection = "plays"
+)
 
 func mustGetenv(k string) string {
 	v := os.Getenv(k)
@@ -27,16 +31,56 @@ func mustGetenv(k string) string {
 	return v
 }
 
-func songDocID(songTime time.Time, title, artist string) string {
+// Mirror of onairlogsync.Normalize / DisplayClean. Kept inlined so the
+// migrate module does not have to depend on the runtime package.
+var (
+	parenRE = regexp.MustCompile(`[\(（\[［][^\)）\]］]*[\)）\]］]`)
+	featRE  = regexp.MustCompile(`(?i)\b(?:featuring|feat|ft)(?:\.|\b)`)
+	wsRE    = regexp.MustCompile(`\s+`)
+)
+
+func displayClean(s string) string {
+	s = parenRE.ReplaceAllString(s, " ")
+	s = wsRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+func normalize(s string) string {
+	s = parenRE.ReplaceAllString(s, " ")
+	s = strings.ToLower(s)
+	s = featRE.ReplaceAllString(s, "feat.")
+	s = wsRE.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+func hashKey(s string) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "%d\x00%s\x00%s", songTime.Unix(), title, artist)
+	fmt.Fprint(h, s)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+func songID(title, artist string) string {
+	return hashKey(normalize(title) + "\x00" + normalize(artist))
+}
+
+func playID(airTime time.Time, sid string) string {
+	return hashKey(fmt.Sprintf("%d\x00%s", airTime.Unix(), sid))
+}
+
 type songDoc struct {
-	Time   *time.Time `firestore:"time"`
-	Artist string     `firestore:"artist"`
-	Title  string     `firestore:"title"`
+	Title         string     `firestore:"title"`
+	Artist        string     `firestore:"artist"`
+	NormalizedKey string     `firestore:"normalizedKey"`
+	FirstAired    *time.Time `firestore:"firstAired"`
+	LastAired     *time.Time `firestore:"lastAired"`
+	PlayCount     int        `firestore:"playCount"`
+}
+
+type playDoc struct {
+	SongID    string     `firestore:"songId"`
+	Time      *time.Time `firestore:"time"`
+	RawTitle  string     `firestore:"rawTitle"`
+	RawArtist string     `firestore:"rawArtist"`
 }
 
 func main() {
@@ -44,7 +88,7 @@ func main() {
 	limit := flag.Int64("limit", 0, "max rows to migrate (0 = unlimited)")
 	chunkSize := flag.Int64("chunk", 1000, "rows per chunk")
 	dryRun := flag.Bool("dry-run", false, "do not write to Firestore")
-	reset := flag.Bool("reset", false, "delete all docs in the songs collection and exit")
+	reset := flag.Bool("reset", false, "delete all docs in songs and plays, then exit")
 	flag.Parse()
 
 	if *reset {
@@ -60,9 +104,6 @@ func main() {
 			dsn += "?parseTime=true"
 		}
 	}
-	// MySQL DATETIME values were written by gorm with loc=Asia/Tokyo, so
-	// they hold raw JST values. Without specifying loc here, the driver
-	// would interpret them as UTC and shift every timestamp by +9h.
 	if !strings.Contains(dsn, "loc=") {
 		dsn += "&loc=Asia%2FTokyo"
 	}
@@ -90,10 +131,8 @@ func main() {
 
 	bw := fs.BulkWriter(ctx)
 
-	// BulkWriter rejects multiple writes against the same document path.
-	// MySQL has duplicate (time, title, artist) rows, so dedupe by docID
-	// in-process before enqueueing.
-	seen := make(map[string]struct{})
+	songMeta := make(map[string]songDoc)
+	seenPlay := make(map[string]struct{})
 
 	var (
 		lastID    = *startID
@@ -140,21 +179,52 @@ func main() {
 			got++
 			processed++
 
-			tt := t
-			docID := songDocID(tt, title.String, artist.String)
-			if _, ok := seen[docID]; ok {
+			rawTitle := title.String
+			rawArtist := artist.String
+			sid := songID(rawTitle, rawArtist)
+			pid := playID(t, sid)
+
+			if _, ok := seenPlay[pid]; ok {
 				duplicate++
 				continue
 			}
-			seen[docID] = struct{}{}
+			seenPlay[pid] = struct{}{}
+
+			tt := t
+
+			meta, exists := songMeta[sid]
+			if !exists {
+				meta = songDoc{
+					Title:         displayClean(rawTitle),
+					Artist:        displayClean(rawArtist),
+					NormalizedKey: normalize(rawTitle) + "|" + normalize(rawArtist),
+					FirstAired:    &tt,
+					LastAired:     &tt,
+				}
+			} else {
+				if meta.FirstAired == nil || tt.Before(*meta.FirstAired) {
+					meta.FirstAired = &tt
+				}
+				if meta.LastAired == nil || tt.After(*meta.LastAired) {
+					meta.LastAired = &tt
+				}
+			}
+			meta.PlayCount++
+			songMeta[sid] = meta
 
 			if *dryRun {
 				continue
 			}
-			doc := fs.Collection(collection).Doc(docID)
-			if _, err := bw.Set(doc, songDoc{Time: &tt, Artist: artist.String, Title: title.String}); err != nil {
+
+			doc := fs.Collection(playsCollection).Doc(pid)
+			if _, err := bw.Set(doc, playDoc{
+				SongID:    sid,
+				Time:      &tt,
+				RawTitle:  rawTitle,
+				RawArtist: rawArtist,
+			}); err != nil {
 				rows.Close()
-				log.Fatalf("bulkwriter set: %v", err)
+				log.Fatalf("bulkwriter set play: %v", err)
 			}
 			queued++
 		}
@@ -173,15 +243,31 @@ func main() {
 		}
 		elapsed := time.Since(start).Seconds()
 		rate := float64(processed) / elapsed
-		log.Printf("processed=%d queued=%d duplicate=%d lastID=%d elapsed=%.0fs rate=%.0f/s",
-			processed, queued, duplicate, lastID, elapsed, rate)
+		log.Printf("plays processed=%d queued=%d duplicate=%d unique-songs=%d lastID=%d elapsed=%.0fs rate=%.0f/s",
+			processed, queued, duplicate, len(songMeta), lastID, elapsed, rate)
 	}
 
+	log.Printf("plays import done. processed=%d queued=%d duplicate=%d unique-songs=%d",
+		processed, queued, duplicate, len(songMeta))
+
 	if !*dryRun {
+		var songsWritten int64
+		for sid, meta := range songMeta {
+			doc := fs.Collection(songsCollection).Doc(sid)
+			if _, err := bw.Set(doc, meta); err != nil {
+				log.Fatalf("bulkwriter set song: %v", err)
+			}
+			songsWritten++
+			if songsWritten%5000 == 0 {
+				bw.Flush()
+				log.Printf("songs queued=%d / %d", songsWritten, len(songMeta))
+			}
+		}
 		bw.End()
+		log.Printf("songs import done. wrote=%d", songsWritten)
 	}
-	log.Printf("done. processed=%d queued=%d duplicate=%d lastID=%d total=%.0fs",
-		processed, queued, duplicate, lastID, time.Since(start).Seconds())
+
+	log.Printf("done. total=%.0fs", time.Since(start).Seconds())
 }
 
 func runReset() {
@@ -197,8 +283,15 @@ func runReset() {
 	}
 	defer fs.Close()
 
+	for _, name := range []string{playsCollection, songsCollection} {
+		log.Printf("resetting collection %q...", name)
+		deleteCollection(ctx, fs, name)
+	}
+}
+
+func deleteCollection(ctx context.Context, fs *firestore.Client, name string) {
 	bw := fs.BulkWriter(ctx)
-	col := fs.Collection(collection)
+	col := fs.Collection(name)
 	const pageSize = 500
 
 	var deleted int64
@@ -228,9 +321,9 @@ func runReset() {
 		}
 		bw.Flush()
 		elapsed := time.Since(start).Seconds()
-		log.Printf("deleted=%d elapsed=%.0fs rate=%.0f/s",
-			deleted, elapsed, float64(deleted)/elapsed)
+		log.Printf("[%s] deleted=%d elapsed=%.0fs rate=%.0f/s",
+			name, deleted, elapsed, float64(deleted)/elapsed)
 	}
 	bw.End()
-	log.Printf("reset done. deleted=%d total=%.0fs", deleted, time.Since(start).Seconds())
+	log.Printf("[%s] reset done. deleted=%d total=%.0fs", name, deleted, time.Since(start).Seconds())
 }

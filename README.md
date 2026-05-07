@@ -2,6 +2,13 @@
 
 J-WAVE の OnAir Log をクロールして Firestore に保存し、新着曲を Slack 通知する Cloud Functions。
 
+## データモデル
+
+- `songs/{songId}`: 楽曲マスター。`(title, artist)` を正規化して同一曲を 1 ドキュメントに集約。`firstAired` / `lastAired` / `playCount` を保持。
+- `plays/{playId}`: オンエア履歴。各 doc は `songId` で `songs` を参照。`rawTitle` / `rawArtist` には原文を保存。
+
+ID は決定論的: `songId = sha1(normTitle | normArtist)`、`playId = sha1(unix_time | songId)`。同じ曲・同じ時刻のエントリは冪等に書き換えられる。
+
 ## 環境変数
 
 | 変数 | 用途 |
@@ -58,7 +65,7 @@ curl -X POST http://localhost:8080 \
 
 ## Cloud SQL からのデータ移行
 
-`migrate/` 以下に MySQL → Firestore の一括移行ツールがあります。
+`migrate/` 以下に MySQL → Firestore の一括移行ツールがあります。MySQL の各行を `plays` に書き、メモリ上で集計した楽曲メタを `songs` に書き出します。
 
 ```sh
 cd migrate
@@ -73,8 +80,11 @@ go run .
 # 中断時の再開 (出力末尾の lastID から)
 go run . --start-id=123456
 
-# 動作確認
+# 動作確認 (Firestore に書き込まずに正規化結果と件数を見る)
 go run . --limit=100 --dry-run
+
+# songs / plays を全消去
+go run . --reset
 ```
 
-ドキュメント ID は `sha1(unix_time | title | artist)` で決定論的に生成されるため、再実行は冪等です。
+ID 生成が決定論的なので、再実行は冪等です。同じ曲が同じ時刻に重複登録されることはありません。

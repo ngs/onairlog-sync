@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/pubsub v1.33.0
 	github.com/GoogleCloudPlatform/functions-framework-go v1.8.1
 	github.com/ashwanthkumar/slack-go-webhook v0.0.0-20200209025033-430dd4e66960
+	github.com/cloudevents/sdk-go/v2 v2.14.0
 	github.com/gocolly/colly v1.2.0
 	google.golang.org/api v0.149.0
 	google.golang.org/grpc v1.59.0
@@ -25,7 +26,6 @@ require (
 	github.com/antchfx/htmlquery v1.3.6 // indirect
 	github.com/antchfx/xmlquery v1.5.1 // indirect
 	github.com/antchfx/xpath v1.3.6 // indirect
-	github.com/cloudevents/sdk-go/v2 v2.14.0 // indirect
 	github.com/elazarl/goproxy v1.8.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

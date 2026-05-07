@@ -12,15 +12,32 @@ J-WAVE の OnAir Log をクロールして Firestore に保存し、新着曲を
 
 ## ローカル実行
 
+Cloud Functions Gen 2 では 1 プロセスで 1 関数のみ動かします。`FUNCTION_TARGET` で対象を切り替えてください。
+
 ```sh
 gcloud auth application-default login
 
-go run ./local
+# Sync をローカルで起動
+FUNCTION_TARGET=Sync PROJECT_ID=onairlog FIRESTORE_DATABASE=onairlog go run ./local
 
-# 別ターミナル
-curl http://localhost:8080/sync -d '{"data":""}'
+# 別ターミナルから CloudEvent を投げる
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: application/json" \
+  -H "ce-id: 1" -H "ce-source: //pubsub.googleapis.com/" \
+  -H "ce-specversion: 1.0" \
+  -H "ce-type: google.cloud.pubsub.topic.v1.messagePublished" \
+  -d '{"message":{"data":""},"subscription":"projects/onairlog/subscriptions/sync"}'
+
+# Notify を試す場合
+FUNCTION_TARGET=Notify PROJECT_ID=onairlog FIRESTORE_DATABASE=onairlog \
+  SLACK_WEBHOOK_URL=https://... go run ./local
 JSON=$(cat fixtures/songs.json)
-curl http://localhost:8080/notify -d "{\"data\":\"$(echo $JSON | base64)\"}"
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: application/json" \
+  -H "ce-id: 1" -H "ce-source: //pubsub.googleapis.com/" \
+  -H "ce-specversion: 1.0" \
+  -H "ce-type: google.cloud.pubsub.topic.v1.messagePublished" \
+  -d "{\"message\":{\"data\":\"$(echo -n $JSON | base64)\"},\"subscription\":\"projects/onairlog/subscriptions/notify\"}"
 ```
 
 ## Firestore 初期セットアップ

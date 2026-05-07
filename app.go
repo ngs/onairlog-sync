@@ -135,6 +135,14 @@ func (app *App) Visit(date time.Time) bool {
 	if date.After(time.Now()) {
 		return true
 	}
+	// J-WAVE's URL expects JST date/time fields. time.Time loaded from
+	// Firestore carries UTC location, so format in JST explicitly.
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		app.LogError(err)
+		return true
+	}
+	date = date.In(jst)
 	c := colly.NewCollector()
 	rows := []Song{}
 	c.OnHTML(".list_songs", func(e *colly.HTMLElement) {

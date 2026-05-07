@@ -53,6 +53,12 @@ func main() {
 			dsn += "?parseTime=true"
 		}
 	}
+	// MySQL DATETIME values were written by gorm with loc=Asia/Tokyo, so
+	// they hold raw JST values. Without specifying loc here, the driver
+	// would interpret them as UTC and shift every timestamp by +9h.
+	if !strings.Contains(dsn, "loc=") {
+		dsn += "&loc=Asia%2FTokyo"
+	}
 	projectID := mustGetenv("PROJECT_ID")
 
 	db, err := sql.Open("mysql", dsn)

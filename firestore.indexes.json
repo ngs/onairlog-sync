@@ -1,0 +1,15 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "songs",
+      "fieldPath": "title",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "songs",
+      "fieldPath": "artist",
+      "indexes": []
+    }
+  ]
+}

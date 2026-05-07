@@ -2,14 +2,13 @@
 
 set -eux
 
-RUNTIME=go113
+RUNTIME=go121
 BASE_DIR=$(cd $(dirname $0)/.. && pwd)
 FUNCTION=$1
 
 cd $BASE_DIR
 
 cat >.env.yml <<EOF
-DATABASE_URI: ${DATABASE_URI}
 SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
 PROJECT_ID: ${PROJECT_ID}
 EOF

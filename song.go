@@ -1,14 +1,9 @@
 package onairlogsync
 
-import (
-	"time"
-
-	"github.com/jinzhu/gorm"
-)
+import "time"
 
 type Song struct {
-	gorm.Model
-	Time   *time.Time
-	Artist string
-	Title  string
+	Time   *time.Time `firestore:"time" json:"time"`
+	Artist string     `firestore:"artist" json:"artist"`
+	Title  string     `firestore:"title" json:"title"`
 }

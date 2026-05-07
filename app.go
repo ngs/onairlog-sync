@@ -2,6 +2,8 @@ package onairlogsync
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,12 +11,15 @@ import (
 	"time"
 
 	"cloud.google.com/go/errorreporting"
+	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/pubsub"
 	"github.com/gocolly/colly"
-	"github.com/jinzhu/gorm"
-
-	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+const songsCollection = "songs"
 
 func mustGetenv(k string) string {
 	v := os.Getenv(k)
@@ -26,15 +31,15 @@ func mustGetenv(k string) string {
 
 // App .
 type App struct {
-	Context      context.Context
-	pubsubClient *pubsub.Client
-	errorClient  *errorreporting.Client
-	db           *gorm.DB
+	Context         context.Context
+	pubsubClient    *pubsub.Client
+	errorClient     *errorreporting.Client
+	firestoreClient *firestore.Client
 }
 
 // NewApp .
-func NewApp(context context.Context) *App {
-	return &App{Context: context}
+func NewApp(ctx context.Context) *App {
+	return &App{Context: ctx}
 }
 
 // ProjectID .
@@ -42,21 +47,25 @@ func (app *App) ProjectID() string {
 	return mustGetenv("PROJECT_ID")
 }
 
-func (app *App) DB() *gorm.DB {
-	if app.db != nil {
-		return app.db
+// Firestore returns a lazily-initialized Firestore client.
+func (app *App) Firestore() *firestore.Client {
+	if app.firestoreClient != nil {
+		return app.firestoreClient
 	}
-	db, err := gorm.Open("mysql", mustGetenv("DATABASE_URI"))
+	client, err := firestore.NewClient(app.Context, app.ProjectID())
 	if err != nil {
 		app.LogError(err)
-		return nil
+		log.Fatal(err)
 	}
-	db.LogMode(true)
-	if os.Getenv("MIGRATE") == "1" {
-		db.AutoMigrate(&Song{})
+	app.firestoreClient = client
+	return client
+}
+
+// Close releases held clients.
+func (app *App) Close() {
+	if app.firestoreClient != nil {
+		_ = app.firestoreClient.Close()
 	}
-	app.db = db
-	return db
 }
 
 func (app *App) ParseTime(str string) *time.Time {
@@ -71,33 +80,48 @@ func (app *App) ParseTime(str string) *time.Time {
 		return nil
 	}
 	return &t
-
 }
 
-func (app *App) LastSong() Song {
+func (app *App) LastSong() *Song {
+	iter := app.Firestore().Collection(songsCollection).
+		OrderBy("time", firestore.Desc).
+		Limit(1).
+		Documents(app.Context)
+	defer iter.Stop()
+	doc, err := iter.Next()
+	if err == iterator.Done {
+		return nil
+	}
+	if err != nil {
+		app.LogError(err)
+		return nil
+	}
 	var song Song
-	app.DB().Order("time desc").Last(&song)
-	return song
+	if err := doc.DataTo(&song); err != nil {
+		app.LogError(err)
+		return nil
+	}
+	return &song
+}
+
+// SongDocID returns a deterministic document ID for a (time, title, artist) tuple.
+func SongDocID(songTime time.Time, title, artist string) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "%d\x00%s\x00%s", songTime.Unix(), title, artist)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (app *App) InsertSong(songTime *time.Time, title, artist string) (*Song, error) {
-	db := app.DB()
-	var count int
-	db.Model(&Song{}).Where(Song{
-		Time:   songTime,
-		Title:  title,
-		Artist: artist,
-	}).Limit(1).Count(&count)
-	if count > 0 {
+	if songTime == nil {
 		return nil, nil
 	}
-	song := Song{
-		Time:   songTime,
-		Title:  title,
-		Artist: artist,
-	}
-	res := db.Create(&song)
-	if err := res.Error; err != nil {
+	song := Song{Time: songTime, Artist: artist, Title: title}
+	id := SongDocID(*songTime, title, artist)
+	_, err := app.Firestore().Collection(songsCollection).Doc(id).Create(app.Context, song)
+	if err != nil {
+		if status.Code(err) == codes.AlreadyExists {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &song, nil
@@ -112,7 +136,7 @@ func (app *App) Visit(date time.Time) bool {
 	c.OnHTML(".list_songs", func(e *colly.HTMLElement) {
 		e.ForEach(".song", func(index int, e *colly.HTMLElement) {
 			songTime := app.ParseTime(e.ChildText(".song_info .time span"))
-			if !date.Before(*songTime) {
+			if songTime == nil || !date.Before(*songTime) {
 				return
 			}
 			title := e.ChildText("h4")

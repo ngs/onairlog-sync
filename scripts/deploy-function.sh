@@ -3,7 +3,7 @@
 set -eux
 
 RUNTIME=go126
-REGION=${REGION:-us-central1}
+REGION=${REGION:-asia-northeast1}
 BASE_DIR=$(cd $(dirname $0)/.. && pwd)
 FUNCTION=$1
 

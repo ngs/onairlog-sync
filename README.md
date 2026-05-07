@@ -65,26 +65,51 @@ curl -X POST http://localhost:8080 \
 
 ## Cloud SQL からのデータ移行
 
-`migrate/` 以下に MySQL → Firestore の一括移行ツールがあります。MySQL の各行を `plays` に書き、メモリ上で集計した楽曲メタを `songs` に書き出します。
+`migrate/` 以下に MySQL → Firestore の一括移行ツールがあります。**集計を MySQL に任せて Firestore に流す 2 段構成**で、メモリ使用量を一定に保ちつつ各フェーズが独立に再開できます。
+
+### Phase 1: 既存 raw `songs` から MySQL 上に `csongs` / `plays` を構築
+
+正規化と aggregation を MySQL の `INSERT ... ON DUPLICATE KEY UPDATE` で行います。
 
 ```sh
 cd migrate
 export DATABASE_URI='user:pass@tcp(host:3306)/dbname'
-export PROJECT_ID='your-project-id'
-export FIRESTORE_DATABASE='onairlog'
 gcloud auth application-default login
 
-# 全件移行
-go run .
+# 全件 prep
+go run . --prep
 
-# 中断時の再開 (出力末尾の lastID から)
-go run . --start-id=123456
+# 再開 (raw songs.id ベース)
+go run . --prep --start-id=1234567
 
-# 動作確認 (Firestore に書き込まずに正規化結果と件数を見る)
-go run . --limit=100 --dry-run
-
-# songs / plays を全消去
-go run . --reset
+# ドライラン
+go run . --prep --limit=100 --dry-run
 ```
 
-ID 生成が決定論的なので、再実行は冪等です。同じ曲が同じ時刻に重複登録されることはありません。
+完了後、SQL で内容確認:
+
+```sql
+SELECT COUNT(*) FROM csongs;
+SELECT COUNT(*) FROM plays;
+SELECT title, artist, play_count FROM csongs ORDER BY play_count DESC LIMIT 50;
+```
+
+### Phase 2: MySQL から Firestore へ流し込み
+
+```sh
+export PROJECT_ID='your-project-id'
+export FIRESTORE_DATABASE='onairlog'
+
+# 全 plays + csongs を Firestore に投入
+go run .
+
+# plays だけ途中再開
+go run . --start-play-id=<lastID>
+
+# csongs だけ途中再開
+go run . --start-song-id=<lastID>
+```
+
+Firestore 側を全消去する場合: `go run . --reset`
+
+ID は決定論的に生成されるため、再実行は冪等です。

@@ -14,6 +14,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	_ "github.com/go-sql-driver/mysql"
+	"google.golang.org/api/iterator"
 )
 
 const collection = "songs"
@@ -43,7 +44,13 @@ func main() {
 	limit := flag.Int64("limit", 0, "max rows to migrate (0 = unlimited)")
 	chunkSize := flag.Int64("chunk", 1000, "rows per chunk")
 	dryRun := flag.Bool("dry-run", false, "do not write to Firestore")
+	reset := flag.Bool("reset", false, "delete all docs in the songs collection and exit")
 	flag.Parse()
+
+	if *reset {
+		runReset()
+		return
+	}
 
 	dsn := mustGetenv("DATABASE_URI")
 	if !strings.Contains(dsn, "parseTime=") {
@@ -175,4 +182,55 @@ func main() {
 	}
 	log.Printf("done. processed=%d queued=%d duplicate=%d lastID=%d total=%.0fs",
 		processed, queued, duplicate, lastID, time.Since(start).Seconds())
+}
+
+func runReset() {
+	projectID := mustGetenv("PROJECT_ID")
+	ctx := context.Background()
+	dbName := os.Getenv("FIRESTORE_DATABASE")
+	if dbName == "" {
+		dbName = firestore.DefaultDatabaseID
+	}
+	fs, err := firestore.NewClientWithDatabase(ctx, projectID, dbName)
+	if err != nil {
+		log.Fatalf("firestore client: %v", err)
+	}
+	defer fs.Close()
+
+	bw := fs.BulkWriter(ctx)
+	col := fs.Collection(collection)
+	const pageSize = 500
+
+	var deleted int64
+	start := time.Now()
+	for {
+		iter := col.Limit(pageSize).Documents(ctx)
+		var got int
+		for {
+			doc, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				iter.Stop()
+				log.Fatalf("iter: %v", err)
+			}
+			if _, err := bw.Delete(doc.Ref); err != nil {
+				iter.Stop()
+				log.Fatalf("bulkwriter delete: %v", err)
+			}
+			got++
+			deleted++
+		}
+		iter.Stop()
+		if got == 0 {
+			break
+		}
+		bw.Flush()
+		elapsed := time.Since(start).Seconds()
+		log.Printf("deleted=%d elapsed=%.0fs rate=%.0f/s",
+			deleted, elapsed, float64(deleted)/elapsed)
+	}
+	bw.End()
+	log.Printf("reset done. deleted=%d total=%.0fs", deleted, time.Since(start).Seconds())
 }

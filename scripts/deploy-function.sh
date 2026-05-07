@@ -25,4 +25,5 @@ gcloud functions deploy $FUNCTION \
     --entry-point $FUNCTION \
     --source . \
     --service-account $SERVICE_ACCOUNT_EMAIL \
+    --build-service-account "projects/${PROJECT_ID}/serviceAccounts/${SERVICE_ACCOUNT_EMAIL}" \
     --env-vars-file "${BASE_DIR}/.env.yml"

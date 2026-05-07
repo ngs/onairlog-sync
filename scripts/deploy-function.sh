@@ -3,7 +3,7 @@
 set -eux
 
 RUNTIME=go126
-REGION=${REGION:-us-central1}
+REGION=${REGION:-asia-northeast1}
 BASE_DIR=$(cd $(dirname $0)/.. && pwd)
 FUNCTION=$1
 
@@ -25,4 +25,5 @@ gcloud functions deploy $FUNCTION \
     --entry-point $FUNCTION \
     --source . \
     --service-account $SERVICE_ACCOUNT_EMAIL \
+    --build-service-account "projects/${PROJECT_ID}/serviceAccounts/${SERVICE_ACCOUNT_EMAIL}" \
     --env-vars-file "${BASE_DIR}/.env.yml"

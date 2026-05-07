@@ -23,21 +23,33 @@ func Notify(ctx context.Context, e event.Event) error {
 		app.LogError(err)
 		return err
 	}
-	var songs []Song
-	if err := json.Unmarshal(msg.Message.Data, &songs); err != nil {
+	var plays []PublishedPlay
+	if err := json.Unmarshal(msg.Message.Data, &plays); err != nil {
 		app.LogError(err)
 		return err
 	}
 
-	for _, song := range songs {
-		timeStr := (*song.Time).Format("2006/01/02 15:04")
-		fallback := fmt.Sprintf("%s %s / %s", timeStr, song.Title, song.Artist)
-		ts := (*song.Time).Unix()
+	for _, item := range plays {
+		t := item.Play.Time
+		if t == nil {
+			continue
+		}
+		title := item.Song.Title
+		artist := item.Song.Artist
+		if title == "" {
+			title = item.Play.RawTitle
+		}
+		if artist == "" {
+			artist = item.Play.RawArtist
+		}
+		timeStr := t.Format("2006/01/02 15:04")
+		fallback := fmt.Sprintf("%s %s / %s", timeStr, title, artist)
+		ts := t.Unix()
 
 		attachment1 := slack.Attachment{}
 		attachment1.Fallback = &fallback
-		attachment1.AuthorName = &song.Artist
-		attachment1.Title = &song.Title
+		attachment1.AuthorName = &artist
+		attachment1.Title = &title
 		attachment1.Timestamp = &ts
 		payload := slack.Payload{
 			Attachments: []slack.Attachment{attachment1},

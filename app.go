@@ -19,7 +19,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const songsCollection = "songs"
+const (
+	songsCollection = "songs"
+	playsCollection = "plays"
+)
 
 func mustGetenv(k string) string {
 	v := os.Getenv(k)
@@ -86,8 +89,9 @@ func (app *App) ParseTime(str string) *time.Time {
 	return &t
 }
 
-func (app *App) LastSong() *Song {
-	iter := app.Firestore().Collection(songsCollection).
+// LastPlay returns the most recently aired Play, or nil if none exists.
+func (app *App) LastPlay() *Play {
+	iter := app.Firestore().Collection(playsCollection).
 		OrderBy("time", firestore.Desc).
 		Limit(1).
 		Documents(app.Context)
@@ -100,35 +104,86 @@ func (app *App) LastSong() *Song {
 		app.LogError(err)
 		return nil
 	}
-	var song Song
-	if err := doc.DataTo(&song); err != nil {
+	var play Play
+	if err := doc.DataTo(&play); err != nil {
 		app.LogError(err)
 		return nil
 	}
-	return &song
+	return &play
 }
 
-// SongDocID returns a deterministic document ID for a (time, title, artist) tuple.
-func SongDocID(songTime time.Time, title, artist string) string {
+// PlayDocID returns the deterministic Firestore ID for a Play. It is
+// based on the raw (untreated) title and artist exactly as they came
+// from the source so it stays stable when the normalization rules
+// evolve — re-normalizing only updates Play.SongID, the doc itself
+// keeps its identity.
+func PlayDocID(airTime time.Time, rawTitle, rawArtist string) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "%d\x00%s\x00%s", songTime.Unix(), title, artist)
+	fmt.Fprintf(h, "%d\x00%s\x00%s", airTime.Unix(), rawTitle, rawArtist)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (app *App) InsertSong(songTime *time.Time, title, artist string) (*Song, error) {
-	if songTime == nil {
-		return nil, nil
+// InsertPlay creates a Play and upserts the canonical Song it points to.
+// Returns (play, song, error). When the play already exists (same airtime
+// and song), play is nil to indicate "nothing new".
+func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Play, *Song, error) {
+	if airTime == nil {
+		return nil, nil, nil
 	}
-	song := Song{Time: songTime, Artist: artist, Title: title}
-	id := SongDocID(*songTime, title, artist)
-	_, err := app.Firestore().Collection(songsCollection).Doc(id).Create(app.Context, song)
-	if err != nil {
+
+	songID := SongID(rawTitle, rawArtist)
+	playID := PlayDocID(*airTime, rawTitle, rawArtist)
+
+	playRef := app.Firestore().Collection(playsCollection).Doc(playID)
+	songRef := app.Firestore().Collection(songsCollection).Doc(songID)
+
+	play := Play{
+		SongID:    songID,
+		Time:      airTime,
+		RawTitle:  rawTitle,
+		RawArtist: rawArtist,
+	}
+
+	if _, err := playRef.Create(app.Context, play); err != nil {
 		if status.Code(err) == codes.AlreadyExists {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
-	return &song, nil
+
+	var resultSong Song
+	err := app.Firestore().RunTransaction(app.Context, func(ctx context.Context, tx *firestore.Transaction) error {
+		snap, err := tx.Get(songRef)
+		if status.Code(err) == codes.NotFound {
+			resultSong = Song{
+				Title:         DisplayClean(rawTitle),
+				Artist:        DisplayClean(rawArtist),
+				NormalizedKey: NormalizedKey(rawTitle, rawArtist),
+				FirstAired:    airTime,
+				LastAired:     airTime,
+				PlayCount:     1,
+			}
+			return tx.Create(songRef, resultSong)
+		}
+		if err != nil {
+			return err
+		}
+		if err := snap.DataTo(&resultSong); err != nil {
+			return err
+		}
+		if resultSong.FirstAired == nil || airTime.Before(*resultSong.FirstAired) {
+			resultSong.FirstAired = airTime
+		}
+		if resultSong.LastAired == nil || airTime.After(*resultSong.LastAired) {
+			resultSong.LastAired = airTime
+		}
+		resultSong.PlayCount++
+		return tx.Set(songRef, resultSong)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return &play, &resultSong, nil
 }
 
 func (app *App) Visit(date time.Time) bool {
@@ -144,20 +199,22 @@ func (app *App) Visit(date time.Time) bool {
 	}
 	date = date.In(jst)
 	c := colly.NewCollector()
-	rows := []Song{}
+	var rows []PublishedPlay
 	c.OnHTML(".list_songs", func(e *colly.HTMLElement) {
 		e.ForEach(".song", func(index int, e *colly.HTMLElement) {
-			songTime := app.ParseTime(e.ChildText(".song_info .time span"))
-			if songTime == nil || !date.Before(*songTime) {
+			airTime := app.ParseTime(e.ChildText(".song_info .time span"))
+			if airTime == nil || !date.Before(*airTime) {
 				return
 			}
 			title := e.ChildText("h4")
 			artist := e.ChildText(".txt_artist span")
-			song, err := app.InsertSong(songTime, title, artist)
+			play, song, err := app.InsertPlay(airTime, title, artist)
 			if err != nil {
 				app.LogError(err)
-			} else if song != nil {
-				rows = append(rows, *song)
+				return
+			}
+			if play != nil && song != nil {
+				rows = append(rows, PublishedPlay{Play: *play, Song: *song})
 			}
 		})
 	})
@@ -169,15 +226,21 @@ func (app *App) Visit(date time.Time) bool {
 	})
 
 	c.Visit(date.Format("https://www.j-wave.co.jp/cgi-bin/soundsearch_result.cgi?year=2006&month=01&day=02&hour=15&minute=04"))
-	app.PublishNewSongs(rows)
+	app.PublishNewPlays(rows)
 	return app.Visit(date.Add(2 * time.Hour))
 }
 
-func (app *App) PublishNewSongs(songs []Song) {
-	if len(songs) == 0 {
+// PublishedPlay is the message body delivered to the notify topic.
+type PublishedPlay struct {
+	Play Play `json:"play"`
+	Song Song `json:"song"`
+}
+
+func (app *App) PublishNewPlays(rows []PublishedPlay) {
+	if len(rows) == 0 {
 		return
 	}
-	data, err := json.Marshal(songs)
+	data, err := json.Marshal(rows)
 	if err != nil {
 		app.LogError(err)
 		return

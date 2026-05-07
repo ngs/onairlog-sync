@@ -1,0 +1,30 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+      - ci
+  pull_request:
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+
+      - name: Vet (root module)
+        run: go vet ./...
+      - name: Test (root module)
+        run: go test -v ./...
+
+      - name: Vet (migrate module)
+        working-directory: migrate
+        run: go vet ./...
+      - name: Build (migrate module)
+        working-directory: migrate
+        run: go build ./...

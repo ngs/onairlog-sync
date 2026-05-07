@@ -4,9 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+
+	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
+	"github.com/cloudevents/sdk-go/v2/event"
 )
 
-func Sync(ctx context.Context, m PubSubMessage) error {
+func init() {
+	functions.CloudEvent("Sync", Sync)
+}
+
+func Sync(ctx context.Context, e event.Event) error {
 	app := NewApp(ctx)
 	defer app.Close()
 	last := app.LastSong()

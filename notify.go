@@ -5,15 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
 	"github.com/ashwanthkumar/slack-go-webhook"
+	"github.com/cloudevents/sdk-go/v2/event"
 )
 
-func Notify(ctx context.Context, m PubSubMessage) error {
-	var songs []Song
+func init() {
+	functions.CloudEvent("Notify", Notify)
+}
+
+func Notify(ctx context.Context, e event.Event) error {
 	webhookUrl := mustGetenv("SLACK_WEBHOOK_URL")
 	app := NewApp(ctx)
-	err := json.Unmarshal(m.Data, &songs)
-	if err != nil {
+
+	var msg PubSubMessage
+	if err := e.DataAs(&msg); err != nil {
+		app.LogError(err)
+		return err
+	}
+	var songs []Song
+	if err := json.Unmarshal(msg.Message.Data, &songs); err != nil {
 		app.LogError(err)
 		return err
 	}

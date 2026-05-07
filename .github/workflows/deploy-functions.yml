@@ -8,6 +8,7 @@ env:
   PROJECT_ID: ${{ secrets.PROJECT_ID }}
   SERVICE_ACCOUNT_EMAIL: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  FIRESTORE_DATABASE: onairlog
 
 jobs:
   deploy:

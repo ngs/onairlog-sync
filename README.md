@@ -7,6 +7,7 @@ J-WAVE の OnAir Log をクロールして Firestore に保存し、新着曲を
 | 変数 | 用途 |
 |---|---|
 | `PROJECT_ID` | GCP プロジェクト ID (Firestore / Pub/Sub / Error Reporting) |
+| `FIRESTORE_DATABASE` | Firestore データベース名 (省略時は `(default)`、本番では `onairlog`) |
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook (Notify 関数のみ) |
 
 ## ローカル実行
@@ -24,13 +25,17 @@ curl http://localhost:8080/notify -d "{\"data\":\"$(echo $JSON | base64)\"}"
 
 ## Firestore 初期セットアップ
 
-1. データベース作成 (リージョン: `asia-northeast1`)
+1. データベース作成 (リージョン: `asia-northeast1`、名前: `onairlog`)
    ```sh
-   gcloud firestore databases create --location=asia-northeast1 --type=firestore-native
+   gcloud firestore databases create \
+     --database=onairlog \
+     --location=asia-northeast1 \
+     --type=firestore-native
    ```
+   既存の `(default)` DB が Datastore モードで使われている場合に備え、別名で作成します。
 2. インデックス設定の反映 (`title`, `artist` の単一フィールドインデックスを無効化してストレージ削減)
    ```sh
-   firebase deploy --only firestore:indexes
+   firebase deploy --only firestore:indexes --project=onairlog
    ```
    または `gcloud firestore indexes fields update` で個別に無効化。
 
@@ -42,6 +47,7 @@ curl http://localhost:8080/notify -d "{\"data\":\"$(echo $JSON | base64)\"}"
 cd migrate
 export DATABASE_URI='user:pass@tcp(host:3306)/dbname'
 export PROJECT_ID='your-project-id'
+export FIRESTORE_DATABASE='onairlog'
 gcloud auth application-default login
 
 # 全件移行

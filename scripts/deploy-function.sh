@@ -11,6 +11,7 @@ cd $BASE_DIR
 cat >.env.yml <<EOF
 SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
 PROJECT_ID: ${PROJECT_ID}
+FIRESTORE_DATABASE: ${FIRESTORE_DATABASE}
 EOF
 
 TOPIC=$(echo $FUNCTION | sed 's/\([a-z0-9]\)\([A-Z]\)/\1-\2/g' | tr '[:upper:]' '[:lower:]')

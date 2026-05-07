@@ -65,7 +65,11 @@ func main() {
 	}
 
 	ctx := context.Background()
-	fs, err := firestore.NewClient(ctx, projectID)
+	dbName := os.Getenv("FIRESTORE_DATABASE")
+	if dbName == "" {
+		dbName = firestore.DefaultDatabaseID
+	}
+	fs, err := firestore.NewClientWithDatabase(ctx, projectID, dbName)
 	if err != nil {
 		log.Fatalf("firestore client: %v", err)
 	}

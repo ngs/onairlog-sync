@@ -52,7 +52,11 @@ func (app *App) Firestore() *firestore.Client {
 	if app.firestoreClient != nil {
 		return app.firestoreClient
 	}
-	client, err := firestore.NewClient(app.Context, app.ProjectID())
+	db := os.Getenv("FIRESTORE_DATABASE")
+	if db == "" {
+		db = firestore.DefaultDatabaseID
+	}
+	client, err := firestore.NewClientWithDatabase(app.Context, app.ProjectID(), db)
 	if err != nil {
 		app.LogError(err)
 		log.Fatal(err)

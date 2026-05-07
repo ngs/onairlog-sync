@@ -77,10 +77,16 @@ func main() {
 
 	bw := fs.BulkWriter(ctx)
 
+	// BulkWriter rejects multiple writes against the same document path.
+	// MySQL has duplicate (time, title, artist) rows, so dedupe by docID
+	// in-process before enqueueing.
+	seen := make(map[string]struct{})
+
 	var (
 		lastID    = *startID
 		processed int64
 		queued    int64
+		duplicate int64
 	)
 
 	start := time.Now()
@@ -121,11 +127,18 @@ func main() {
 			got++
 			processed++
 
+			tt := t
+			docID := songDocID(tt, title.String, artist.String)
+			if _, ok := seen[docID]; ok {
+				duplicate++
+				continue
+			}
+			seen[docID] = struct{}{}
+
 			if *dryRun {
 				continue
 			}
-			tt := t
-			doc := fs.Collection(collection).Doc(songDocID(tt, title.String, artist.String))
+			doc := fs.Collection(collection).Doc(docID)
 			if _, err := bw.Set(doc, songDoc{Time: &tt, Artist: artist.String, Title: title.String}); err != nil {
 				rows.Close()
 				log.Fatalf("bulkwriter set: %v", err)
@@ -147,13 +160,13 @@ func main() {
 		}
 		elapsed := time.Since(start).Seconds()
 		rate := float64(processed) / elapsed
-		log.Printf("processed=%d queued=%d lastID=%d elapsed=%.0fs rate=%.0f/s",
-			processed, queued, lastID, elapsed, rate)
+		log.Printf("processed=%d queued=%d duplicate=%d lastID=%d elapsed=%.0fs rate=%.0f/s",
+			processed, queued, duplicate, lastID, elapsed, rate)
 	}
 
 	if !*dryRun {
 		bw.End()
 	}
-	log.Printf("done. processed=%d queued=%d lastID=%d total=%.0fs",
-		processed, queued, lastID, time.Since(start).Seconds())
+	log.Printf("done. processed=%d queued=%d duplicate=%d lastID=%d total=%.0fs",
+		processed, queued, duplicate, lastID, time.Since(start).Seconds())
 }

@@ -112,11 +112,14 @@ func (app *App) LastPlay() *Play {
 	return &play
 }
 
-// PlayDocID returns the deterministic Firestore ID for a Play given its
-// air time and the canonical SongID it belongs to.
-func PlayDocID(airTime time.Time, songID string) string {
+// PlayDocID returns the deterministic Firestore ID for a Play. It is
+// based on the raw (untreated) title and artist exactly as they came
+// from the source so it stays stable when the normalization rules
+// evolve — re-normalizing only updates Play.SongID, the doc itself
+// keeps its identity.
+func PlayDocID(airTime time.Time, rawTitle, rawArtist string) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "%d\x00%s", airTime.Unix(), songID)
+	fmt.Fprintf(h, "%d\x00%s\x00%s", airTime.Unix(), rawTitle, rawArtist)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -129,7 +132,7 @@ func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Pla
 	}
 
 	songID := SongID(rawTitle, rawArtist)
-	playID := PlayDocID(*airTime, songID)
+	playID := PlayDocID(*airTime, rawTitle, rawArtist)
 
 	playRef := app.Firestore().Collection(playsCollection).Doc(playID)
 	songRef := app.Firestore().Collection(songsCollection).Doc(songID)

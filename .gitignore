@@ -3,3 +3,4 @@
 coverage.html
 coverage.txt
 vendor
+/migrate/migrate

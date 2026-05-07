@@ -15,6 +15,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/text/unicode/norm"
 	"google.golang.org/api/iterator"
 )
 
@@ -31,21 +32,49 @@ const (
 // runtime-package dependency) ----------
 
 var (
-	parenRE = regexp.MustCompile(`[\(（\[［][^\)）\]］]*[\)）\]］]`)
-	featRE  = regexp.MustCompile(`(?i)\b(?:featuring|feat|ft)(?:\.|\b)`)
-	wsRE    = regexp.MustCompile(`\s+`)
+	parenRE     = regexp.MustCompile(`[\(（\[［][^\)）\]］]*[\)）\]］]`)
+	featRE      = regexp.MustCompile(`(?i)\b(?:featuring|feat|ft)(?:\.|\b)`)
+	sepRE       = regexp.MustCompile(`(?i)[&+,/]|\band\b`)
+	punctRE     = regexp.MustCompile(`[^\p{L}\p{N}\s]`)
+	wsRE        = regexp.MustCompile(`\s+`)
+	invisibleRE = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x{00AD}\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{206F}\x{FEFF}]`)
 )
 
 func displayClean(s string) string {
+	s = invisibleRE.ReplaceAllString(s, "")
 	s = parenRE.ReplaceAllString(s, " ")
 	s = wsRE.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	s = stripOuterQuotes(s)
 	return strings.TrimSpace(s)
 }
 
+var outerQuotes = [][2]string{
+	{`"`, `"`},
+	{`'`, `'`},
+	{"“", "”"},
+	{"‘", "’"},
+}
+
+func stripOuterQuotes(s string) string {
+	for _, p := range outerQuotes {
+		if len(s) >= len(p[0])+len(p[1]) &&
+			strings.HasPrefix(s, p[0]) &&
+			strings.HasSuffix(s, p[1]) {
+			return s[len(p[0]) : len(s)-len(p[1])]
+		}
+	}
+	return s
+}
+
 func normalize(s string) string {
+	s = invisibleRE.ReplaceAllString(s, "")
+	s = norm.NFKC.String(s)
 	s = parenRE.ReplaceAllString(s, " ")
 	s = strings.ToLower(s)
-	s = featRE.ReplaceAllString(s, "feat.")
+	s = featRE.ReplaceAllString(s, " ")
+	s = sepRE.ReplaceAllString(s, " ")
+	s = punctRE.ReplaceAllString(s, " ")
 	s = wsRE.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
@@ -60,8 +89,10 @@ func songID(title, artist string) string {
 	return hashKey(normalize(title) + "\x00" + normalize(artist))
 }
 
-func playID(airTime time.Time, sid string) string {
-	return hashKey(fmt.Sprintf("%d\x00%s", airTime.Unix(), sid))
+// playID is keyed off the raw title/artist (not the normalized songId)
+// so it stays stable when the normalization rules evolve.
+func playID(airTime time.Time, rawTitle, rawArtist string) string {
+	return hashKey(fmt.Sprintf("%d\x00%s\x00%s", airTime.Unix(), rawTitle, rawArtist))
 }
 
 // ---------- env / connection helpers ----------
@@ -244,7 +275,7 @@ func runPrep(startID, limit, chunkSize int64, dryRun bool) {
 			rawTitle := title.String
 			rawArtist := artist.String
 			sid := songID(rawTitle, rawArtist)
-			pid := playID(t, sid)
+			pid := playID(t, rawTitle, rawArtist)
 			nKey := normalize(rawTitle) + "|" + normalize(rawArtist)
 
 			if dryRun {

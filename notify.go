@@ -56,7 +56,7 @@ func Notify(ctx context.Context, e event.Event) error {
 			attachment1.TitleLink = &link
 		}
 		if art := song.ArtworkURL(); art != "" {
-			attachment1.ThumbnailUrl = &art
+			attachment1.ImageUrl = &art
 		}
 		payload := slack.Payload{
 			Attachments: []slack.Attachment{attachment1},

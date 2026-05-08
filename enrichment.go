@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2/google"
@@ -58,7 +59,6 @@ func (app *App) Enrich(ctx context.Context, rawTitle, rawArtist string) (*Enrich
 	res := &EnrichmentResult{
 		ITunesResponse: itunesRaw,
 		LLMResponse:    llmRaw,
-		ArtworkURL:     ExtractArtworkURL(itunesRaw),
 	}
 	if v := verdict["trackId"]; v != nil {
 		switch tv := v.(type) {
@@ -80,6 +80,26 @@ func (app *App) Enrich(ctx context.Context, rawTitle, rawArtist string) (*Enrich
 		res.Confidence = c
 	}
 
+	// Hybrid fallback: when the LLM was uncertain (no trackId picked)
+	// but the iTunes top result's artist matches the LLM-derived
+	// canonical artist (after normalization), trust the top result.
+	// This recovers cases like "HEROIN / MAROON 5" where iTunes
+	// surfaces "Heroine / マルーン5" as the top hit but the LLM
+	// disagrees on the title because it differs by one letter.
+	if res.ITunesTrackID == 0 {
+		if topID, topArtist, topArtwork := topITunesHit(itunesRaw); topID > 0 &&
+			res.CanonicalArtist != "" && Normalize(topArtist) == Normalize(res.CanonicalArtist) {
+			res.ITunesTrackID = topID
+			res.ArtworkURL = topArtwork
+		}
+	}
+
+	if res.ArtworkURL == "" && res.ITunesTrackID > 0 {
+		// Pull artwork from the candidate that matches the verified
+		// trackId so the image always belongs to the linked track.
+		res.ArtworkURL = artworkForTrack(itunesRaw, res.ITunesTrackID)
+	}
+
 	// Canonical key: prefer the verified iTunes track id, fall back to
 	// the canonical (title, artist) hash so soft-link merging still
 	// has something to group on for tracks iTunes can't identify.
@@ -93,6 +113,64 @@ func (app *App) Enrich(ctx context.Context, rawTitle, rawArtist string) (*Enrich
 	}
 	res.ITunesURL = BuildITunesURL(res.ITunesTrackID)
 	return res, nil
+}
+
+// topITunesHit returns the trackId, artistName and 600x600 artworkUrl
+// of the first iTunes Search result, or zero values if missing.
+func topITunesHit(itunes map[string]interface{}) (int64, string, string) {
+	if itunes == nil {
+		return 0, "", ""
+	}
+	results, _ := itunes["results"].([]interface{})
+	if len(results) == 0 {
+		return 0, "", ""
+	}
+	r0, _ := results[0].(map[string]interface{})
+	var id int64
+	switch v := r0["trackId"].(type) {
+	case float64:
+		id = int64(v)
+	case string:
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			id = n
+		}
+	}
+	artist, _ := r0["artistName"].(string)
+	artwork, _ := r0["artworkUrl100"].(string)
+	if artwork != "" {
+		artwork = strings.ReplaceAll(artwork, "100x100bb", "600x600bb")
+	}
+	return id, artist, artwork
+}
+
+// artworkForTrack scans the iTunes results for the given trackId and
+// returns its 600x600 artwork URL. Falls back to the top result if the
+// id is not found (handy when LLM picks a differently-numbered match).
+func artworkForTrack(itunes map[string]interface{}, trackID int64) string {
+	if itunes == nil || trackID == 0 {
+		return ExtractArtworkURL(itunes)
+	}
+	results, _ := itunes["results"].([]interface{})
+	for _, r := range results {
+		rm, _ := r.(map[string]interface{})
+		var id int64
+		switch v := rm["trackId"].(type) {
+		case float64:
+			id = int64(v)
+		case string:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				id = n
+			}
+		}
+		if id == trackID {
+			u, _ := rm["artworkUrl100"].(string)
+			if u == "" {
+				return ""
+			}
+			return strings.ReplaceAll(u, "100x100bb", "600x600bb")
+		}
+	}
+	return ExtractArtworkURL(itunes)
 }
 
 // iTunesSearch returns the raw response (for archival) and a parsed

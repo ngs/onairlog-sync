@@ -123,6 +123,46 @@ func PlayDocID(airTime time.Time, rawTitle, rawArtist string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// BuildPlay constructs the Play document for a new airplay event.
+// Pure function — no Firestore dependency, suitable for testing the
+// publish payload assembly.
+func BuildPlay(airTime *time.Time, rawTitle, rawArtist string) Play {
+	return Play{
+		SongID:    SongID(rawTitle, rawArtist),
+		Time:      airTime,
+		RawTitle:  rawTitle,
+		RawArtist: rawArtist,
+	}
+}
+
+// NewSongFromPlay builds the canonical Song document the first time a
+// (rawTitle, rawArtist) is observed.
+func NewSongFromPlay(airTime *time.Time, rawTitle, rawArtist string) Song {
+	return Song{
+		Title:         DisplayClean(rawTitle),
+		Artist:        DisplayClean(rawArtist),
+		NormalizedKey: NormalizedKey(rawTitle, rawArtist),
+		FirstAired:    airTime,
+		LastAired:     airTime,
+		PlayCount:     1,
+	}
+}
+
+// ApplyPlay merges a new airplay into an existing Song's aggregate
+// fields and returns the updated Song. Pure function — does not mutate
+// existing.
+func ApplyPlay(existing Song, airTime *time.Time) Song {
+	updated := existing
+	if updated.FirstAired == nil || airTime.Before(*updated.FirstAired) {
+		updated.FirstAired = airTime
+	}
+	if updated.LastAired == nil || airTime.After(*updated.LastAired) {
+		updated.LastAired = airTime
+	}
+	updated.PlayCount++
+	return updated
+}
+
 // InsertPlay creates a Play and upserts the canonical Song it points to.
 // Returns (play, song, error). When the play already exists (same airtime
 // and song), play is nil to indicate "nothing new".
@@ -137,12 +177,7 @@ func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Pla
 	playRef := app.Firestore().Collection(playsCollection).Doc(playID)
 	songRef := app.Firestore().Collection(songsCollection).Doc(songID)
 
-	play := Play{
-		SongID:    songID,
-		Time:      airTime,
-		RawTitle:  rawTitle,
-		RawArtist: rawArtist,
-	}
+	play := BuildPlay(airTime, rawTitle, rawArtist)
 
 	if _, err := playRef.Create(app.Context, play); err != nil {
 		if status.Code(err) == codes.AlreadyExists {
@@ -155,29 +190,17 @@ func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Pla
 	err := app.Firestore().RunTransaction(app.Context, func(ctx context.Context, tx *firestore.Transaction) error {
 		snap, err := tx.Get(songRef)
 		if status.Code(err) == codes.NotFound {
-			resultSong = Song{
-				Title:         DisplayClean(rawTitle),
-				Artist:        DisplayClean(rawArtist),
-				NormalizedKey: NormalizedKey(rawTitle, rawArtist),
-				FirstAired:    airTime,
-				LastAired:     airTime,
-				PlayCount:     1,
-			}
+			resultSong = NewSongFromPlay(airTime, rawTitle, rawArtist)
 			return tx.Create(songRef, resultSong)
 		}
 		if err != nil {
 			return err
 		}
-		if err := snap.DataTo(&resultSong); err != nil {
+		var existing Song
+		if err := snap.DataTo(&existing); err != nil {
 			return err
 		}
-		if resultSong.FirstAired == nil || airTime.Before(*resultSong.FirstAired) {
-			resultSong.FirstAired = airTime
-		}
-		if resultSong.LastAired == nil || airTime.After(*resultSong.LastAired) {
-			resultSong.LastAired = airTime
-		}
-		resultSong.PlayCount++
+		resultSong = ApplyPlay(existing, airTime)
 		return tx.Set(songRef, resultSong)
 	})
 	if err != nil {

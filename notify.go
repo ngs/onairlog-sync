@@ -34,8 +34,9 @@ func Notify(ctx context.Context, e event.Event) error {
 		if t == nil {
 			continue
 		}
-		title := item.Song.Title
-		artist := item.Song.Artist
+		song := item.Song
+		title := song.DisplayTitle()
+		artist := song.DisplayArtist()
 		if title == "" {
 			title = item.Play.RawTitle
 		}
@@ -51,6 +52,12 @@ func Notify(ctx context.Context, e event.Event) error {
 		attachment1.AuthorName = &artist
 		attachment1.Title = &title
 		attachment1.Timestamp = &ts
+		if link := song.ITunesURL(); link != "" {
+			attachment1.TitleLink = &link
+		}
+		if art := song.ArtworkURL(); art != "" {
+			attachment1.ThumbnailUrl = &art
+		}
 		payload := slack.Payload{
 			Attachments: []slack.Attachment{attachment1},
 		}

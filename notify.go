@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
@@ -81,6 +82,9 @@ func Notify(ctx context.Context, e event.Event) error {
 		app.LogError(err)
 		return err
 	}
+	log.Printf("notify: received pubsub data (%d bytes): %s",
+		len(msg.Message.Data), string(msg.Message.Data))
+
 	var plays []PublishedPlay
 	if err := json.Unmarshal(msg.Message.Data, &plays); err != nil {
 		app.LogError(err)
@@ -88,13 +92,17 @@ func Notify(ctx context.Context, e event.Event) error {
 	}
 
 	jst := jstLocation()
-	for _, item := range plays {
+	for i, item := range plays {
 		attachment, ok := BuildSlackAttachment(item, jst)
 		if !ok {
+			log.Printf("notify[%d]: skipped (Play.Time nil) raw=%+v", i, item)
 			continue
 		}
 		payload := slack.Payload{
 			Attachments: []slack.Attachment{attachment},
+		}
+		if b, err := json.Marshal(payload); err == nil {
+			log.Printf("notify[%d]: slack payload: %s", i, string(b))
 		}
 		errors := slack.Send(webhookUrl, "", payload)
 		if len(errors) > 0 {

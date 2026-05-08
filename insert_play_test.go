@@ -235,3 +235,97 @@ func TestPublishedPlay_pointerAliasingIsBenign(t *testing.T) {
 		t.Errorf("expected both = airTime, got play.Time=%v song.LastAired=%v", pp.Play.Time, pp.Song.LastAired)
 	}
 }
+
+// TestProduction_airTimeNewerThanLastAired pins the contract for the
+// scenario that broke in production: J-WAVE plays the song today
+// (airTime = today, JST), but the song's existing.LastAired in
+// Firestore is older (e.g. yesterday's catch-up imported May 3 entry).
+//
+// Expected: play.time AND song.lastAired both move to airTime.
+//
+// The Slack notification observed in production showed play.time =
+// existing.LastAired (= old) for this scenario, which contradicts the
+// pure-logic contract this test enforces.
+func TestProduction_airTimeNewerThanLastAired(t *testing.T) {
+	existing := Song{
+		Title:      "イデアが溢れて眠れない",
+		Artist:     "VAUNDY",
+		FirstAired: ts("2026-04-27T14:19:37Z"),
+		LastAired:  ts("2026-05-03T05:28:17Z"), // older
+		PlayCount:  3,
+	}
+	at := ts("2026-05-08T02:11:54Z") // today's airplay (newer)
+
+	pp := PublishedPlay{
+		Play: BuildPlay(at, "イデアが溢れて眠れない", "VAUNDY"),
+		Song: ApplyPlay(existing, at),
+	}
+
+	if !pp.Play.Time.Equal(*at) {
+		t.Errorf("play.Time = %v, want %v (airTime, today)", pp.Play.Time, at)
+	}
+	if !pp.Song.LastAired.Equal(*at) {
+		t.Errorf("song.LastAired = %v, want %v (must advance from %v to today)",
+			pp.Song.LastAired, at, existing.LastAired)
+	}
+	if pp.Song.PlayCount != 4 {
+		t.Errorf("playCount = %d, want 4", pp.Song.PlayCount)
+	}
+
+	// Round-trip the JSON the way Sync→Pub/Sub→Notify would.
+	b, _ := json.Marshal(pp)
+	var got PublishedPlay
+	_ = json.Unmarshal(b, &got)
+	if !got.Play.Time.Equal(*at) || !got.Song.LastAired.Equal(*at) {
+		t.Errorf("after JSON round-trip play.Time=%v song.LastAired=%v, want both %v",
+			got.Play.Time, got.Song.LastAired, at)
+	}
+	// Detect the production bug pattern (play.time matching the OLD
+	// existing.LastAired). If this triggers, the bug landed in pure
+	// logic — test it before chasing Firestore/HTTP layers.
+	if got.Play.Time.Equal(*existing.LastAired) && got.Song.LastAired.Equal(*existing.LastAired) {
+		t.Errorf("regression: play.time and song.lastAired both equal the stale existing.LastAired (%v)",
+			existing.LastAired)
+	}
+}
+
+// TestProduction_airTimeOlderThanLastAired covers the opposite of the
+// production scenario: the J-WAVE feed surfaces an older airplay (e.g.
+// catch-up scrape of an earlier date) for a song whose Firestore
+// LastAired already points at a more recent airing.
+//
+// Expected: play.time = airTime (the older time), song.lastAired
+// stays at existing (must not regress).
+func TestProduction_airTimeOlderThanLastAired(t *testing.T) {
+	existing := Song{
+		Title:      "イデアが溢れて眠れない",
+		Artist:     "VAUNDY",
+		FirstAired: ts("2026-04-27T14:19:37Z"),
+		LastAired:  ts("2026-05-08T02:11:54Z"), // newer
+		PlayCount:  4,
+	}
+	at := ts("2026-05-03T05:28:17Z") // older
+
+	pp := PublishedPlay{
+		Play: BuildPlay(at, "イデアが溢れて眠れない", "VAUNDY"),
+		Song: ApplyPlay(existing, at),
+	}
+
+	if !pp.Play.Time.Equal(*at) {
+		t.Errorf("play.Time = %v, want %v (airTime)", pp.Play.Time, at)
+	}
+	if !pp.Song.LastAired.Equal(*existing.LastAired) {
+		t.Errorf("song.LastAired = %v, want %v (must not regress)",
+			pp.Song.LastAired, existing.LastAired)
+	}
+	if pp.Song.PlayCount != 5 {
+		t.Errorf("playCount = %d, want 5", pp.Song.PlayCount)
+	}
+	// In this case, play.time and song.lastAired SHOULD differ because
+	// they are independent pieces of metadata.
+	if pp.Play.Time.Equal(*pp.Song.LastAired) {
+		t.Errorf("play.time and song.lastAired collapsed to the same value (%v); "+
+			"they should diverge when airTime is older than existing.LastAired",
+			pp.Play.Time)
+	}
+}

@@ -15,6 +15,63 @@ func init() {
 	functions.CloudEvent("Notify", Notify)
 }
 
+// jstLocation returns Asia/Tokyo, falling back to UTC if the zone
+// database is unavailable (e.g. in a stripped-down container).
+func jstLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// BuildSlackAttachment renders a Slack attachment for a single
+// PublishedPlay. Pure function — no side effects, suitable for tests.
+//
+// Title / artist prefer the canonical (enriched) values, falling back
+// to the raw display fields, then to the play's raw title/artist.
+// The footer always shows the JST-formatted airplay time so Slack's
+// own ts collapse cannot hide the time of day.
+func BuildSlackAttachment(item PublishedPlay, loc *time.Location) (slack.Attachment, bool) {
+	if item.Play.Time == nil {
+		return slack.Attachment{}, false
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	song := item.Song
+	title := song.DisplayTitle()
+	artist := song.DisplayArtist()
+	if title == "" {
+		title = item.Play.RawTitle
+	}
+	if artist == "" {
+		artist = item.Play.RawArtist
+	}
+
+	t := item.Play.Time.In(loc)
+	timeStr := t.Format("2006/01/02 15:04")
+	fallback := fmt.Sprintf("%s %s / %s", timeStr, title, artist)
+	ts := item.Play.Time.Unix()
+
+	a := slack.Attachment{}
+	a.Fallback = &fallback
+	a.AuthorName = &artist
+	a.Title = &title
+	a.Footer = &timeStr
+	a.Timestamp = &ts
+	if song.ITunesURL != "" {
+		link := song.ITunesURL
+		a.TitleLink = &link
+	}
+	if song.ArtworkURL != "" {
+		art := song.ArtworkURL
+		a.ImageUrl = &art
+	}
+	return a, true
+}
+
 func Notify(ctx context.Context, e event.Event) error {
 	webhookUrl := mustGetenv("SLACK_WEBHOOK_URL")
 	app := NewApp(ctx)
@@ -30,45 +87,14 @@ func Notify(ctx context.Context, e event.Event) error {
 		return err
 	}
 
+	jst := jstLocation()
 	for _, item := range plays {
-		t := item.Play.Time
-		if t == nil {
+		attachment, ok := BuildSlackAttachment(item, jst)
+		if !ok {
 			continue
 		}
-		song := item.Song
-		title := song.DisplayTitle()
-		artist := song.DisplayArtist()
-		if title == "" {
-			title = item.Play.RawTitle
-		}
-		if artist == "" {
-			artist = item.Play.RawArtist
-		}
-		jst, err := time.LoadLocation("Asia/Tokyo")
-		if err != nil {
-			app.LogError(err)
-			jst = time.UTC
-		}
-		timeStr := t.In(jst).Format("2006/01/02 15:04")
-		fallback := fmt.Sprintf("%s %s / %s", timeStr, title, artist)
-		ts := t.Unix()
-
-		attachment1 := slack.Attachment{}
-		attachment1.Fallback = &fallback
-		attachment1.AuthorName = &artist
-		attachment1.Title = &title
-		attachment1.Footer = &timeStr
-		attachment1.Timestamp = &ts
-		if song.ITunesURL != "" {
-			link := song.ITunesURL
-			attachment1.TitleLink = &link
-		}
-		if song.ArtworkURL != "" {
-			art := song.ArtworkURL
-			attachment1.ImageUrl = &art
-		}
 		payload := slack.Payload{
-			Attachments: []slack.Attachment{attachment1},
+			Attachments: []slack.Attachment{attachment},
 		}
 		errors := slack.Send(webhookUrl, "", payload)
 		if len(errors) > 0 {

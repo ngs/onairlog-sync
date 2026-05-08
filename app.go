@@ -183,7 +183,40 @@ func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Pla
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Best-effort enrichment via iTunes + Gemini. Failures are logged
+	// but do not fail the InsertPlay call.
+	if app.shouldEnrich(&resultSong) {
+		if er, err := app.Enrich(app.Context, rawTitle, rawArtist); err != nil {
+			app.LogError(fmt.Errorf("enrich %s/%s: %w", rawTitle, rawArtist, err))
+		} else {
+			now := time.Now().UTC()
+			resultSong.EnrichedAt = &now
+			resultSong.ITunesTrackID = er.ITunesTrackID
+			resultSong.CanonicalTitle = er.CanonicalTitle
+			resultSong.CanonicalArtist = er.CanonicalArtist
+			resultSong.CanonicalKey = er.CanonicalKey
+			resultSong.ITunesResponse = er.ITunesResponse
+			resultSong.LLMResponse = er.LLMResponse
+			if _, err := songRef.Set(app.Context, resultSong); err != nil {
+				app.LogError(fmt.Errorf("persist enrichment %s: %w", songID, err))
+			}
+		}
+	}
+
 	return &play, &resultSong, nil
+}
+
+// shouldEnrich returns true when the song has never been enriched or
+// when its last enrichment is older than enrichmentFreshness.
+func (app *App) shouldEnrich(s *Song) bool {
+	if s == nil {
+		return false
+	}
+	if s.EnrichedAt == nil {
+		return true
+	}
+	return time.Since(*s.EnrichedAt) > enrichmentFreshness
 }
 
 func (app *App) Visit(date time.Time) bool {

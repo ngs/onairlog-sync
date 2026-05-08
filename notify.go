@@ -59,10 +59,12 @@ func Notify(ctx context.Context, e event.Event) error {
 		attachment1.Title = &title
 		attachment1.Footer = &timeStr
 		attachment1.Timestamp = &ts
-		if link := song.ITunesURL(); link != "" {
+		if song.ITunesURL != "" {
+			link := song.ITunesURL
 			attachment1.TitleLink = &link
 		}
-		if art := song.ArtworkURL(); art != "" {
+		if song.ArtworkURL != "" {
+			art := song.ArtworkURL
 			attachment1.ImageUrl = &art
 		}
 		payload := slack.Payload{

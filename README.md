@@ -13,9 +13,23 @@ ID は決定論的: `songId = sha1(normTitle | normArtist)`、`playId = sha1(uni
 
 | 変数 | 用途 |
 |---|---|
-| `PROJECT_ID` | GCP プロジェクト ID (Firestore / Pub/Sub / Error Reporting) |
+| `PROJECT_ID` | GCP プロジェクト ID (Firestore / Pub/Sub / Error Reporting / Vertex AI) |
 | `FIRESTORE_DATABASE` | Firestore データベース名 (省略時は `(default)`、本番では `onairlog`) |
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook (Notify 関数のみ) |
+
+## エンリッチメント
+
+Sync は新着曲を Firestore に書き込んだ後、Song doc が未エンリッチ (または `enrichedAt` が 30 日以上前) ならば、iTunes Search API + Vertex AI Gemini Flash Lite で正規表記を補完します。失敗時は警告ログだけ出して Sync 自体は成功します。
+
+ランタイム SA に **`roles/aiplatform.user`** が必要です:
+
+```sh
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/aiplatform.user"
+```
+
+Vertex AI のロケーションは `global`、モデルは `gemini-3.1-flash-lite` (GA)。
 
 ## ローカル実行
 

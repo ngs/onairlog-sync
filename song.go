@@ -11,6 +11,16 @@ type Song struct {
 	FirstAired    *time.Time `firestore:"firstAired" json:"firstAired"`
 	LastAired     *time.Time `firestore:"lastAired" json:"lastAired"`
 	PlayCount     int        `firestore:"playCount" json:"playCount"`
+
+	// Enrichment fields, populated by the iTunes Search API + Gemini
+	// verification pipeline. Optional.
+	EnrichedAt      *time.Time             `firestore:"enrichedAt,omitempty" json:"enrichedAt,omitempty"`
+	ITunesTrackID   int64                  `firestore:"itunesTrackId,omitempty" json:"itunesTrackId,omitempty"`
+	CanonicalTitle  string                 `firestore:"canonicalTitle,omitempty" json:"canonicalTitle,omitempty"`
+	CanonicalArtist string                 `firestore:"canonicalArtist,omitempty" json:"canonicalArtist,omitempty"`
+	CanonicalKey    string                 `firestore:"canonicalKey,omitempty" json:"canonicalKey,omitempty"`
+	ITunesResponse  map[string]interface{} `firestore:"itunesResponse,omitempty" json:"-"`
+	LLMResponse     map[string]interface{} `firestore:"llmResponse,omitempty" json:"-"`
 }
 
 // Play is a single airplay event and references a Song by ID.

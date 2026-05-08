@@ -1,6 +1,10 @@
 package onairlogsync
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Song is a canonical airplay subject identified by the normalized
 // (title, artist) pair. Multiple Plays reference the same Song.
@@ -29,4 +33,55 @@ type Play struct {
 	Time      *time.Time `firestore:"time" json:"time"`
 	RawTitle  string     `firestore:"rawTitle" json:"rawTitle"`
 	RawArtist string     `firestore:"rawArtist" json:"rawArtist"`
+}
+
+// DisplayTitle prefers the canonical (enriched) title, falling back to
+// the raw display string captured at airplay time.
+func (s *Song) DisplayTitle() string {
+	if s == nil {
+		return ""
+	}
+	if s.CanonicalTitle != "" {
+		return s.CanonicalTitle
+	}
+	return s.Title
+}
+
+// DisplayArtist prefers the canonical (enriched) artist.
+func (s *Song) DisplayArtist() string {
+	if s == nil {
+		return ""
+	}
+	if s.CanonicalArtist != "" {
+		return s.CanonicalArtist
+	}
+	return s.Artist
+}
+
+// ITunesURL returns the music.apple.com URL for the verified track,
+// or an empty string when the song has no iTunes match.
+func (s *Song) ITunesURL() string {
+	if s == nil || s.ITunesTrackID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://music.apple.com/jp/song/%d", s.ITunesTrackID)
+}
+
+// ArtworkURL extracts the cover art URL from the archived iTunes
+// response and upscales it to 600x600. Returns an empty string when
+// no artwork is available.
+func (s *Song) ArtworkURL() string {
+	if s == nil || s.ITunesResponse == nil {
+		return ""
+	}
+	results, _ := s.ITunesResponse["results"].([]interface{})
+	if len(results) == 0 {
+		return ""
+	}
+	r0, _ := results[0].(map[string]interface{})
+	u, _ := r0["artworkUrl100"].(string)
+	if u == "" {
+		return ""
+	}
+	return strings.ReplaceAll(u, "100x100bb", "600x600bb")
 }

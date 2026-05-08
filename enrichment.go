@@ -34,6 +34,8 @@ type EnrichmentResult struct {
 	CanonicalArtist string
 	CanonicalKey    string
 	Confidence      float64
+	ITunesURL       string
+	ArtworkURL      string
 	ITunesResponse  map[string]interface{}
 	LLMResponse     map[string]interface{}
 }
@@ -56,6 +58,7 @@ func (app *App) Enrich(ctx context.Context, rawTitle, rawArtist string) (*Enrich
 	res := &EnrichmentResult{
 		ITunesResponse: itunesRaw,
 		LLMResponse:    llmRaw,
+		ArtworkURL:     ExtractArtworkURL(itunesRaw),
 	}
 	if v := verdict["trackId"]; v != nil {
 		switch tv := v.(type) {
@@ -88,6 +91,7 @@ func (app *App) Enrich(ctx context.Context, rawTitle, rawArtist string) (*Enrich
 		fmt.Fprintf(h, "%s\x00%s", Normalize(res.CanonicalTitle), Normalize(res.CanonicalArtist))
 		res.CanonicalKey = "name:" + hex.EncodeToString(h.Sum(nil))
 	}
+	res.ITunesURL = BuildITunesURL(res.ITunesTrackID)
 	return res, nil
 }
 

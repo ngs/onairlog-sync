@@ -196,6 +196,8 @@ func (app *App) InsertPlay(airTime *time.Time, rawTitle, rawArtist string) (*Pla
 			resultSong.CanonicalTitle = er.CanonicalTitle
 			resultSong.CanonicalArtist = er.CanonicalArtist
 			resultSong.CanonicalKey = er.CanonicalKey
+			resultSong.ITunesURL = er.ITunesURL
+			resultSong.ArtworkURL = er.ArtworkURL
 			resultSong.ITunesResponse = er.ITunesResponse
 			resultSong.LLMResponse = er.LLMResponse
 			if _, err := songRef.Set(app.Context, resultSong); err != nil {

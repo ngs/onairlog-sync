@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
 	"github.com/ashwanthkumar/slack-go-webhook"
@@ -43,7 +44,12 @@ func Notify(ctx context.Context, e event.Event) error {
 		if artist == "" {
 			artist = item.Play.RawArtist
 		}
-		timeStr := t.Format("2006/01/02 15:04")
+		jst, err := time.LoadLocation("Asia/Tokyo")
+		if err != nil {
+			app.LogError(err)
+			jst = time.UTC
+		}
+		timeStr := t.In(jst).Format("2006/01/02 15:04")
 		fallback := fmt.Sprintf("%s %s / %s", timeStr, title, artist)
 		ts := t.Unix()
 
@@ -51,11 +57,14 @@ func Notify(ctx context.Context, e event.Event) error {
 		attachment1.Fallback = &fallback
 		attachment1.AuthorName = &artist
 		attachment1.Title = &title
+		attachment1.Footer = &timeStr
 		attachment1.Timestamp = &ts
-		if link := song.ITunesURL(); link != "" {
+		if song.ITunesURL != "" {
+			link := song.ITunesURL
 			attachment1.TitleLink = &link
 		}
-		if art := song.ArtworkURL(); art != "" {
+		if song.ArtworkURL != "" {
+			art := song.ArtworkURL
 			attachment1.ImageUrl = &art
 		}
 		payload := slack.Payload{
